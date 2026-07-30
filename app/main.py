@@ -5,7 +5,9 @@ from app import models
 from sqlalchemy.orm import Session
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 from fastapi.security import OAuth2PasswordRequestForm
-
+import json
+from app.cache import redis_engine
+from fastapi import Request
 
 Base.metadata.create_all(bind=engine)
 
@@ -60,13 +62,26 @@ def book_add(book: Book, db: Session = Depends(get_db), cu: str = Depends(get_cu
 
     db.add(new_book)
     db.commit()
+    redis_engine.delete("all_books")
     db.refresh(new_book)
     return new_book
 
 @app.get("/books")
 def get_books(db: Session = Depends(get_db)):
-    return db.query(models.Book).all()
- 
+    cached_books = redis_engine.get("all_books")
+
+    if cached_books is not None:
+        convert_cache = json.loads(cached_books)
+        return convert_cache
+    else:
+        db_books =  db.query(models.Book).all()
+        json_book = [{"id": book.id, "title": book.title, "author": book.author} for book in db_books]
+        all_books = json.dumps(json_book)
+        print("CACHE DELETED")
+        redis_engine.set("all_books", all_books)
+        return json_book
+
+
 
 
 @app.get("/books/{book_id}")
@@ -149,8 +164,25 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         return {"message" : "User added Successfully"}
     
 @app.post("/login")
-def login(info: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-     
+def login(info: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db), request: Request = ...):
+
+    client_ip = request.client.host
+    rate_limit_key = f"login_attempts:{client_ip}"
+
+    login_attempts = redis_engine.get(rate_limit_key)
+
+    if login_attempts is None:
+        login_attempts = 0
+
+    if int(login_attempts) >= 5:
+        raise HTTPException(status_code=429, detail="Too many requests")
+
+    redis_engine.incr(rate_limit_key)
+
+    if login_attempts == 0:
+        redis_engine.expire(rate_limit_key, 60)
+
+
     check_username = db.query(models.User).filter(models.User.username == info.username).first()
 
     if check_username is not None:
