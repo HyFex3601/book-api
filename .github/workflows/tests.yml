@@ -25,6 +25,12 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=10
+      
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+
     
     steps:
       - name: Checkout code
@@ -40,6 +46,7 @@ jobs:
 
       - name: Run tests
         env:
+          REDIS_URL: redis://127.0.0.1:6379
           DATABASE_URL: mysql+pymysql://root:testpassword@127.0.0.1:3306/bookdb_test
           SECRET_KEY: d92b907ba4c6ef88056184874f1d1832c6954c8b1caefdebd20893ff8eab9cd1
         run: pytest
